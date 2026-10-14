@@ -8,5 +8,5 @@
   proof.textContent = marker;
   proof.style.cssText =
     "position:fixed;inset:16px auto auto 16px;z-index:2147483647;padding:12px;background:#fff;color:#000;border:2px solid #000;font:16px monospace";
-  document.body.appendChild(proof);
+  (document.body || document.documentElement).appendChild(proof);
 })();
