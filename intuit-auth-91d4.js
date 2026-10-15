@@ -1,5 +1,10 @@
 (async()=>{
   const expected="irn:intuit::identity:remediation/session-has-recent-authentication";
+  const report=message=>{
+    document.title=message;
+    document.documentElement.setAttribute("data-intuit-auth-diagnostic",message);
+    alert(message);
+  };
   const live=v=>!!(v&&typeof v.remediate==="function"&&v.authorization&&typeof v.authorization.isAuthorizedBatch==="function");
   const fromProps=p=>{
     if(!p)return null;
@@ -35,7 +40,7 @@
     }
     if(sandbox)break;
   }
-  if(!sandbox){alert("Intuit sandbox not found");return;}
+  if(!sandbox){report("Intuit sandbox not found");return;}
   const request={
     batchRequest:[{
       resource:{id:"irn.intuit.authentication.verifyAuthCredentialWriteAccess"},
@@ -54,7 +59,7 @@
   if(!decision.isAuthorized){
     const remediation=(decision.remediation||[]).find(x=>x&&x.id===expected);
     if(!remediation){
-      alert("Credential-write denied without expected recent-auth remediation");
+      report("Credential-write denied without expected recent-auth remediation");
       return;
     }
     await sandbox.remediate({
@@ -62,5 +67,5 @@
     });
     decision=await getDecision();
   }
-  alert("Credential-write recentAuth="+!!decision.isAuthorized);
+  report("Credential-write recentAuth="+!!decision.isAuthorized);
 })()
