@@ -809,6 +809,8 @@
       offeringEnv = sandbox.appContext.getEnvironment();
       if (offeringEnv === "prod" || offeringEnv === "prd") {
         offeringEnv = "";
+      } else if (offeringEnv === "perf") {
+        offeringEnv = "prf";
       } else if (
         offeringEnv === "cqa" ||
         offeringEnv === "golden" ||
@@ -868,6 +870,13 @@
       diagnosticFail("REPLACE_NO_RESULT");
     }
     if (nativeResult.error) diagnosticFail("REPLACE_NATIVE_ERROR");
+    if (
+      nativeResult.response &&
+      Array.isArray(nativeResult.response.errors) &&
+      nativeResult.response.errors.length
+    ) {
+      diagnosticFail("REPLACE_NATIVE_ERROR");
+    }
     var result =
       nativeResult.response &&
       nativeResult.response.identityCreateOrReplaceEmailCredential;
@@ -922,8 +931,14 @@
     var accountIdentity = readExactAccountIdentity(exact);
 
     // Read the flow only after the authorization gate has passed.
-    var flowId =
-      (window.intuit && window.intuit.ius && window.intuit.ius.flowId) || uuid();
+    var iusContext = window.intuit && window.intuit.ius;
+    var flowId = iusContext && iusContext.flowId;
+    if (!flowId) {
+      flowId = uuid();
+      window.intuit = window.intuit || {};
+      window.intuit.ius = window.intuit.ius || {};
+      window.intuit.ius.flowId = flowId;
+    }
     var slotHint = currentSlotHint(exact);
 
     var prepared = await prepareSignIn(flowId);
