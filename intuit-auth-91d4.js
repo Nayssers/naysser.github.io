@@ -1,4 +1,5 @@
 (async()=>{
+  const expected="irn:intuit::identity:remediation/session-has-recent-authentication";
   const live=v=>!!(v&&typeof v.remediate==="function"&&v.authorization&&typeof v.authorization.isAuthorizedBatch==="function");
   const fromProps=p=>{
     if(!p)return null;
@@ -42,16 +43,24 @@
     }],
     apiVersion:"v2"
   };
-  let decision=(await sandbox.authorization.isAuthorizedBatch(request))[0];
+  const getDecision=async()=>{
+    const result=await sandbox.authorization.isAuthorizedBatch(request);
+    if(!Array.isArray(result)||!result.length||!result[0]||typeof result[0].isAuthorized!=="boolean"){
+      throw new Error("Credential-write authorization returned no decision");
+    }
+    return result[0];
+  };
+  let decision=await getDecision();
   if(!decision.isAuthorized){
-    if(!decision.remediation||!decision.remediation.length){
-      alert("Credential-write denied without remediation");
+    const remediation=(decision.remediation||[]).find(x=>x&&x.id===expected);
+    if(!remediation){
+      alert("Credential-write denied without expected recent-auth remediation");
       return;
     }
     await sandbox.remediate({
-      remediations:btoa(JSON.stringify({remediations:[{id:decision.remediation[0].id}]}))
+      remediations:btoa(JSON.stringify({remediations:[{id:remediation.id}]}))
     });
-    decision=(await sandbox.authorization.isAuthorizedBatch(request))[0];
+    decision=await getDecision();
   }
   alert("Credential-write recentAuth="+!!decision.isAuthorized);
 })()
